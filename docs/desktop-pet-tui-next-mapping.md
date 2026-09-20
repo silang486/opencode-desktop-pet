@@ -73,6 +73,44 @@ Only these concepts should be added to the domain layer:
 
 These are data and events, not a second UI language. They should appear as OpenCode-style Parts, dialogs, notifications, sidebar rows and status blocks.
 
+## Permission model for normal production use
+
+The production Agent uses capability lanes instead of one global read/write switch. OpenCode's generic `read`, `write` and `edit` tools stay disabled. Desktop Pet operations are separate typed tools with their own permission names and schemas.
+
+| Capability | Default action | Scope | Example tools |
+|---|---|---|---|
+| Catalog and project read | `allow` | registered projects, approved workspace roots and the explicit user path | `pet_list_projects`, `pet_search_assets`, `pet_read_artifact`, `pet_read_character_profile` |
+| Skill read | `allow` for the production allowlist | fixed Desktop Pet Skill directory only | native `skill` tool with `skill` rules restricted to approved names |
+| Explicit local reference intake | `allow` after the user names/selects one file | one normalized file, format and size checked | `pet_register_local_reference` |
+| Prompt authoring and candidate save | `allow` | immutable PIC1/PIC2/VIDEO1/VIDEO2 registry records | `pet_save_prompt_instance`, `pet_save_prompt_draft` |
+| Candidate review and approval | `ask` or explicit user command | one artifact/version | `pet_approve_artifact`, `pet_reject_artifact` |
+| Paid generation/GPU submission | `ask` with budget and request-version checks | one frozen request | `pet_submit_generation`, `pet_enqueue_gpu_job` |
+| Code, shell and arbitrary file mutation | `deny` | all paths | OpenCode `bash`, `read`, `write`, `edit`, `apply_patch`, `execute` |
+| Unregistered subagents, plugins and external MCP | `deny` | production profile | `task`, plugin tools, user MCP/Skill sources |
+
+The model can still make normal production decisions because catalog reads and prompt writes are allowed. A prompt save is a logical, immutable registry operation, not permission to edit arbitrary files. Generation and destructive review actions remain separate gates.
+
+### Asset discovery contract
+
+`pet_search_assets` must search three explicit scopes and return the state instead of conflating them:
+
+1. `project`: registered artifacts and project lineage;
+2. `workspace`: read-only indexes and approved roots such as historical work and the role-reference directory;
+3. `explicit_path`: one user-supplied file, normalized and validated without scanning its parent directory.
+
+Each result reports `exists`, `indexed`, `registered`, `usableAsReference`, `artifactId`, `sourcePath`, `project`, `kind` and the reason for any block. A file that exists but is not registered is shown as `found-unregistered` and can be passed to `pet_register_local_reference`; it is not reported as “no material”. The Agent must call this tool for requests such as “查已有产物/素材” before concluding that a project is empty.
+
+The user-provided `F:\VPet-GitHub\rescourese\角色官图\阿拉蕾三视图.png` therefore needs a direct explicit-path path through the same tool and registration flow. It must not depend on the historical `work` index, and it must not require generic filesystem read permission.
+
+### Windows selection and copy
+
+The OpenCode TUI already has a renderer selection API and a native clipboard service. `tui-next` should keep mouse selection enabled on Windows and implement both paths:
+
+- native terminal selection and `onCopySelection` for Windows Terminal/ConPTY;
+- an application context action on right-click when an OpenTUI selection exists: `复制`, `复制为纯文本`, `取消选择`.
+
+`Ctrl+C` copies an active selection and stops a run only when no selection exists. Copying must preserve Chinese text, wide characters, newlines and tool output formatting. This behavior belongs in the OpenTUI selection/clipboard adapter, not in a Python controller or a global Textual click handler.
+
 ## Backend API and event contract
 
 The OpenCode server remains the session API. The Desktop Pet service exposes only a versioned tool surface through a bundled MCP or typed HTTP adapter. The names below are the minimum domain contract; exact schemas must be generated and checked from one source of truth.
@@ -148,6 +186,6 @@ The first TUI acceptance tests should run entirely against this mock and assert 
 
 ## Parity gate
 
-Parity requires: session create/list/switch/resume; rename/fork/edit; multiline composer and paste; streaming; scroll/focus/resize; tool Part rendering; concurrent jobs; stop/abort/retry semantics; Todo; permissions; artifact preview/open; background jobs; inactive-session notifications; reconnect/replay; Chinese Windows input; and no imports from Python implementation modules inside the TUI package.
+Parity requires: session create/list/switch/resume; rename/fork/edit; multiline composer and paste; streaming; scroll/focus/resize; tool Part rendering; concurrent jobs; stop/abort/retry semantics; Todo; permissions; asset search across project/workspace/explicit-path scopes; PIC1/PIC2/VIDEO1/VIDEO2 save; artifact preview/open; background jobs; inactive-session notifications; reconnect/replay; Windows right-click selection and copy; Chinese Windows input; and no imports from Python implementation modules inside the TUI package.
 
 The current Textual TUI is not used as the architectural base for any of these pieces. It remains only as a frozen fallback and behavioral reference during migration.

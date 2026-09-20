@@ -1,6 +1,6 @@
 # Desktop Pet `tui-next` replacement mapping
 
-Status: pre-implementation design. The existing Python/Textual TUI is frozen. This document describes the boundary for a new client; it does not authorize changes to `F:\VPet-GitHub\tools\desktop-pet-studio` yet.
+Status: pre-implementation design. The existing Python/Textual TUI is frozen. This document describes a full OpenCode runtime migration; it does not authorize changes to `F:\VPet-GitHub\tools\desktop-pet-studio` yet.
 
 Research baseline:
 
@@ -13,9 +13,11 @@ Research baseline:
 
 ## Decision
 
-Reuse the OpenCode TUI application shell and its client-side state projection. Keep the Desktop Pet Agent, LangChain `create_agent`, Skills, typed production tools, H3/GPU workers, matting, petpack and development worker in Python. A Python HTTP/SSE adapter becomes the only boundary visible to the TUI.
+Use the forked OpenCode server/runtime and `@opencode-ai/tui` as the production Agent product. The Python side becomes a fixed Desktop Pet business/tool service, exposed through a bundled MCP or typed HTTP tool adapter. LangChain `create_agent`, the Python session runtime, `ClientController`, `PersistentChat` and the Textual shell leave the production execution path after parity is proven; they may remain temporarily as migration fixtures.
 
-The TUI must never import `pet_agent.py`, LangChain message classes, tool objects, graph nodes, provider clients or GPU modules. The Python side must never call Solid/OpenTUI components. The only shared contract is the versioned client API, schemas and event stream.
+OpenCode owns sessions, messages, Parts, prompt admission, streaming, cancellation, permissions, Skill loading, subagent scheduling, persistence, resume and the TUI projection. Python owns character/project facts, prompt and artifact registration, image/H3/GPU workers, matting, petpack, review evidence and development worktrees. No operation has two owners.
+
+The TUI must never import `pet_agent.py`, LangChain message classes, tool objects, graph nodes, provider clients or GPU modules. The Python service must never call Solid/OpenTUI components. The only shared boundary is OpenCode's client/event protocol plus the typed Desktop Pet tool schemas and domain attachments.
 
 ## Current TUI to OpenCode mapping
 
@@ -51,10 +53,8 @@ The package is private and depends on workspace packages such as `@opencode-ai/c
 
 ## Components that need adaptation
 
-- Replace the OpenCode server URL/directory assumptions with a Desktop Pet backend URL and project/session scope.
-- Implement the client contract in Python, with HTTP JSON requests and a reconnecting SSE event stream carrying cursor/event IDs.
-- Project OpenCode `Message` and `Part` records from Python durable events. Each record must carry `sessionID`; assistant/tool parts also carry `runID`, `taskID` and request version where applicable.
-- Map Desktop Pet tool effects to OpenCode-like Tool Parts. The TUI does not decide whether an operation is paid, destructive, development-only or safe; it renders permission requests emitted by the backend.
+- Keep the OpenCode client/event contract in the OpenCode server. Do not build a second Python session/event server. Python tools return structured output and attachments through the fixed MCP/HTTP adapter; OpenCode creates the Message and Tool Parts.
+- Map Desktop Pet tool effects to OpenCode Tool Parts. The TUI does not decide whether an operation is paid, destructive, development-only or safe; it renders permission requests emitted by the OpenCode runtime and results returned by Python tools.
 - Map `PetProject`, `Character`, `Action`, `GenerationJob`, `Artifact`, `GPUJob` and `ReviewRequest` into domain data returned by the adapter and rendered with the same dialog, list, Part and status components.
 - Preserve OpenCode reconnect/hydration behavior: subscribe before requesting the initial snapshot, replay events after a cursor, then reconcile authoritative session/messages/parts/todos/jobs.
 - Keep Windows clipboard, image paste and terminal sizing behind client/runtime adapters. Do not reintroduce Python widget-specific clipboard or focus code into the TUI.
@@ -75,22 +75,13 @@ These are data and events, not a second UI language. They should appear as OpenC
 
 ## Backend API and event contract
 
-The adapter should implement a versioned `/api/desktop-pet/v1` surface. The names below are the minimum contract; exact wire schemas must be generated and checked from one source of truth.
+The OpenCode server remains the session API. The Desktop Pet service exposes only a versioned tool surface through a bundled MCP or typed HTTP adapter. The names below are the minimum domain contract; exact schemas must be generated and checked from one source of truth.
 
 ### Requests
 
-- `GET /sessions` — list/search/resume sessions with status and unread event count.
-- `POST /sessions` — create a session.
-- `GET /sessions/{sessionID}` — authoritative session metadata and current status.
-- `PATCH /sessions/{sessionID}` — rename/archive/project binding with optimistic revision.
-- `GET /sessions/{sessionID}/messages?after=...` — durable Message and Part history.
-- `POST /sessions/{sessionID}/prompt` — admit an input with `delivery: ask | steer | queue`, client message ID and attachments.
-- `POST /sessions/{sessionID}/abort` — idempotent local abort request; returns `aborting` plus affected run/task IDs.
-- `POST /sessions/{sessionID}/permission/{requestID}` — reply once/always/reject with an explicit scope.
-- `GET /sessions/{sessionID}/todo` — actual plan state.
-- `GET /sessions/{sessionID}/jobs` — GenerationJob/GPUJob state and receipts.
-- `GET /artifacts/{artifactID}` — metadata and safe preview/download URL.
-- `GET /events?after={cursor}` — reconnectable SSE stream.
+- OpenCode's existing session, message, prompt, abort, permission, todo and event API remains the primary client contract.
+- The Desktop Pet adapter exposes only typed tools such as `read_character_profile`, `read_production_skill`, `save_pic2_prompt`, `submit_generation`, `inspect_job`, `register_artifact` and `open_artifact`.
+- Domain status and artifact information is returned as tool metadata/attachments and, where a persistent view is required, through a small OpenCode plugin/server extension using the same event envelope. It does not create a second session lifecycle.
 
 All mutating calls return a durable identifier and current revision. They must be safe to retry with the same client request ID.
 
@@ -149,10 +140,11 @@ The first TUI acceptance tests should run entirely against this mock and assert 
 2. Keep the OpenCode fork pinned to a recorded upstream commit and make `packages/tui` build/test in isolation from the fork workspace.
 3. Add a fork-local `tui-next` entrypoint and protocol fixture/mock server. Do not connect it to the Python Agent yet.
 4. Implement the Desktop Pet adapter contract and event projection against the mock. Make the TUI pass the parity scenarios before real backend work.
-5. Add a Python HTTP/SSE server adapter over existing SessionStore, RunControl, durable events, tools and workers. This adapter owns translation; existing Agent/tools remain behind it.
-6. Connect real read-only session/history/status flows, then prompt/stream/abort, then tools/permissions/jobs/artifacts. Each phase gets replay and reconnect tests.
-7. Add `--tui-next` as an opt-in launch path and run real Windows terminal acceptance beside legacy_tui. Keep legacy available as fallback until feature parity is proven.
-8. Cut over the default only after mock, protocol, real backend and Windows E2E acceptance pass. Remove legacy code only in a separate cleanup change after the cutover evidence is archived.
+5. Configure a dedicated `pet-production` OpenCode Agent and disable `build`, `general`, `explore`, code mode, plugins and external MCP/Skill sources in the production profile.
+6. Build a fixed Python Desktop Pet MCP/HTTP tool service. It owns all domain validation, project/version checks, artifact lineage, budget gates, provider calls and remote-job facts; it never owns chat/session state.
+7. Connect the real service to the OpenCode runtime and validate read-only flows, prompt authoring, permissions, tool Parts, jobs, artifacts, steer and abort. Each phase gets replay and reconnect tests.
+8. Add `--tui-next` as an opt-in launch path and run real Windows terminal acceptance beside legacy_tui. Keep legacy available as fallback until feature parity is proven.
+9. Cut over the default only after mock, protocol, real backend and Windows E2E acceptance pass. Remove LangChain/Python runtime/Textual code only in a separate cleanup change after migration evidence is archived.
 
 ## Parity gate
 
